@@ -4,7 +4,11 @@ import selectors
 import types
 from typing import *
 
-messages = ["Message 1 from client", "Message 2 from client"]
+messages = [
+    "Message 1 from client \U0001f389",
+    "Message 2 from client",
+    "Message 3 from client",
+]
 
 
 def start_connections(sel, host: str, port: int, num_conns: int) -> None:
@@ -18,7 +22,7 @@ def start_connections(sel, host: str, port: int, num_conns: int) -> None:
         events = selectors.EVENT_READ | selectors.EVENT_WRITE
         data = types.SimpleNamespace(
             connid=connid,
-            msg_total=sum(len(m) for m in messages),
+            msg_total=sum(len(m.encode()) for m in messages),
             recv_total=0,
             messages=messages.copy(),
             outb=b"",
@@ -34,7 +38,7 @@ def service_connection(sel, key, mask):
         # connection.
         recv_data = sock.recv(1024)
         if recv_data:
-            print(f"Received {recv_data!r} from connection {data.connid}")
+            print(f"Received `{recv_data.decode()}` from connection {data.connid}")
             data.recv_total += len(recv_data)
         if not recv_data or data.recv_total == data.msg_total:
             print(f"Closing connection {data.connid}")
@@ -45,7 +49,7 @@ def service_connection(sel, key, mask):
         if not data.outb and data.messages:
             data.outb = data.messages.pop(0).encode()
         if data.outb:
-            print(f"Sending {data.outb!r} to connection {data.connid}")
+            print(f"Sending {data.outb.decode()} to connection {data.connid}")
             sent = sock.send(data.outb)
             data.outb = data.outb[sent:]
 
