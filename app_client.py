@@ -12,12 +12,26 @@ import traceback
 from typing import *
 
 
-class Message:
-    def __init__(self, sel, sock, server_addr: Tuple[str, int], request: Dict) -> None:
+class SearchProtocol:
+    def __init__(self, request: Dict) -> None:
+        self.request = request
+
+    def handle_json_response(self, response: Dict) -> None:
+        result = response.get("result")
+        print(f"Received result: {result}")
+
+
+# More than just a transport, but not sure a better name to indicate that
+# this thing manages all the send/recv details.
+class Transport:
+    def __init__(
+        self, sel, sock, server_addr: Tuple[str, int], proto: SearchProtocol
+    ) -> None:
         self.sel = sel
         self.sock = sock
         self.server_addr = server_addr
-        self.request = request
+        self.proto = proto
+        self.request = proto.request
         self._recv_buffer = b""
         self._send_buffer = b""
         self._request_queued = False
@@ -61,9 +75,7 @@ class Message:
     def _process_response_json_content(self) -> None:
         if not isinstance(self.response, dict):
             return
-        content = self.response
-        result = content.get("result")
-        print(f"Got result: {result}")
+        self.proto.handle_json_response(self.response)
 
     def process_response(self) -> None:
         if not self.jsonheader:
@@ -89,8 +101,8 @@ class Message:
         else:
             if data:
                 self._recv_buffer += data
-            # else:
-            # raise RuntimeError("Peer closed")
+            else:
+                raise RuntimeError("Peer closed")
 
     def _write(self) -> None:
         if self._send_buffer:
@@ -188,15 +200,15 @@ def create_request(action: str, value) -> Dict:
     raise ValueError("unknown action")
 
 
-def start_connection(sel, host: str, port: int, request: Dict) -> None:
+def start_connection(sel, host: str, port: int, proto: SearchProtocol) -> None:
     addr = (host, port)
     print(f"Starting connection to {addr}")
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setblocking(False)
     sock.connect_ex(addr)
     events = selectors.EVENT_READ | selectors.EVENT_WRITE
-    message = Message(sel, sock, addr, request)
-    sel.register(sock, events, data=message)
+    transport = Transport(sel, sock, addr, proto)
+    sel.register(sock, events, data=transport)
 
 
 def main() -> None:
@@ -207,22 +219,23 @@ def main() -> None:
     host, port = sys.argv[1], int(sys.argv[2])
     action, value = sys.argv[3], sys.argv[4]
     request = create_request(action, value)
+    proto = SearchProtocol(request)
 
     try:
         sel = selectors.DefaultSelector()
-        start_connection(sel, host, port, request)
+        start_connection(sel, host, port, proto)
         while True:
             events = sel.select(timeout=1)
             for key, mask in events:
-                message = key.data
+                transport = key.data
                 try:
-                    message.process_events(mask)
+                    transport.process_events(mask)
                 except Exception:
                     print(
-                        f"Main: Error: Exception for {message.server_addr}:\n"
+                        f"Main: Error: Exception for {transport.server_addr}:\n"
                         f"{traceback.format_exc()}"
                     )
-                    message.close()
+                    transport.close()
             # bail from event loop if we're no sockets remain registered
             if not sel.get_map():
                 break
